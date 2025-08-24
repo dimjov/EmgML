@@ -14,7 +14,7 @@ def main():
     and then extracts features using Discrete Wavelet Transform (DWT).
     The final feature vectors are saved to a new .npz file.
     """
-    mainDataFolder = "./Converted_data"
+    mainDataFolder = r".\\Converted_data"
 
     fs = 2048  # Sampling frequency
     noOfSessions = 3

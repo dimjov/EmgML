@@ -1,5 +1,5 @@
 # A_biometric_fileread.py
-# Capstone Part I: Preparation of dataset (save as .npz instead of .mat)
+# Capstone Part I: Preparation of dataset
 
 import os
 import numpy as np
@@ -7,7 +7,7 @@ import wfdb  # MIT-BIH compatible reader
 
 def main():
     # Dataset path (update if needed)
-    mainFolder = "./Grabmyo-1.0.2"
+    mainFolder = r".\\Grabmyo-1.0.2"
 
     # Output folder
     converted_root = "Converted_data"

@@ -10,13 +10,14 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import confusion_matrix, accuracy_score
 from sklearn.multiclass import OneVsOneClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC
+from sklearn.pipeline import make_pipeline
 import warnings
 
 # Suppress all future warnings to reduce clutter
@@ -106,11 +107,9 @@ def cv_eval_model(X, y, model_name, base_estimator, use_lda_dimred=False):
 
     # Get unique class labels for LDA
     class_order = sorted(np.unique(y))
-    n_components_lda = len(class_order) - 1 if use_lda_dimred else None
-
-    # ECOC wrapper for multiclass classification
-    # This mirrors the fitcecoc behavior in MATLAB
-    classifier = OneVsOneClassifier(base_estimator)
+    # Removed the n_components setting here, as it will be handled by the pipeline
+    # The LDA within the OneVsOneClassifier will automatically determine the number
+    # of components as 1 for each binary classification task.
 
     print(f"\n--- {model_name} Results ---")
     
@@ -118,24 +117,24 @@ def cv_eval_model(X, y, model_name, base_estimator, use_lda_dimred=False):
         X_train, X_test = X[train_index], X[test_index]
         y_train, y_test = y[train_index], y[test_index]
         
-        # Standardize features (fit on train, transform both train and test)
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-        
         if use_lda_dimred:
-            # Fit LDA on the training data and transform both sets
-            lda = LinearDiscriminantAnalysis(n_components=n_components_lda)
-            X_train_transformed = lda.fit_transform(X_train_scaled, y_train)
-            X_test_transformed = lda.transform(X_test_scaled)
-            
-            # Use the transformed data for training and prediction
-            classifier.fit(X_train_transformed, y_train)
-            y_pred = classifier.predict(X_test_transformed)
+            # Create a pipeline with StandardScaler, LDA, and the classifier
+            # OneVsOneClassifier wraps the entire pipeline
+            pipeline = OneVsOneClassifier(make_pipeline(
+                StandardScaler(),
+                LinearDiscriminantAnalysis(), # Removed n_components
+                base_estimator
+            ))
         else:
-            # Use the scaled data directly
-            classifier.fit(X_train_scaled, y_train)
-            y_pred = classifier.predict(X_test_scaled)
+            # Create a pipeline with StandardScaler and the classifier only
+            pipeline = OneVsOneClassifier(make_pipeline(
+                StandardScaler(),
+                base_estimator
+            ))
+        
+        # Fit the pipeline and make predictions
+        pipeline.fit(X_train, y_train)
+        y_pred = pipeline.predict(X_test)
         
         # Calculate accuracy for this fold
         fold_accuracy = accuracy_score(y_test, y_pred)
@@ -213,18 +212,9 @@ def main():
     print(f"Shape of labels (y): {y.shape}")
 
     # Define the classifiers
-    # The classifiers are wrapped in OneVsOneClassifier to mimic MATLAB's fitcecoc
-    
-    # Decision Tree
     dt_base = DecisionTreeClassifier(random_state=42)
-
-    # KNN (k=5)
     knn_base = KNeighborsClassifier(n_neighbors=5)
-
-    # Naive Bayes (GaussianNB approximates MATLAB's kernel NB)
     nb_base = GaussianNB()
-    
-    # SVM with linear kernel
     svm_base = SVC(kernel="linear", random_state=42, probability=True)
 
     # Perform cross-validated evaluation for each model
