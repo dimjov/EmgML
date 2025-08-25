@@ -1,5 +1,5 @@
 # B_feature_extraction.py
-# Capstone Part II: Feature Extraction (all 3 sessions, .npz input/output)
+# Capstone Part II: Feature Extraction (all 3 sessions, all 7 trials, .npz input/output)
 
 import os
 import numpy as np
@@ -14,11 +14,12 @@ def main():
     and then extracts features using Discrete Wavelet Transform (DWT).
     The final feature vectors are saved to a new .npz file.
     """
-    mainDataFolder = r".\\Converted_data"
+    mainDataFolder = r".\Converted_data"
 
     fs = 2048  # Sampling frequency
     noOfSessions = 3
     noOfParticipants = 43
+    noOfTrials = 7
     # Selected gestures from the paper: Little Finger Extension, Index Finger Extension,
     # Thumb Finger Extension, Hand Open, Hand Close.
     gestures = [8, 9, 10, 15, 16]
@@ -45,12 +46,24 @@ def main():
 
             subj_forearm, subj_wrist = [], []
             for g in gestures:
-                # Use trial 1 for consistency with the paper's methodology
-                trialF = forearmData.get((1, g))
-                trialW = wristData.get((1, g))
-
-                subj_forearm.append(trialF)
-                subj_wrist.append(trialW)
+                # Loop through all 7 trials for each gesture
+                trialF_list, trialW_list = [], []
+                for trialNum in range(1, noOfTrials + 1):
+                    trialF = forearmData.get((trialNum, g))
+                    trialW = wristData.get((trialNum, g))
+                    
+                    if trialF is not None and trialW is not None:
+                        trialF_list.append(trialF)
+                        trialW_list.append(trialW)
+                    else:
+                        print(f"Missing data for Trial {trialNum}, Gesture {g}, Participant {participantNum}, skipping this trial.")
+                        # Append None or an empty array to maintain structure if needed
+                        # For now, we just skip it, which might cause length mismatches later. 
+                        # A better approach would be to fill with NaN or zeros.
+                        pass
+                
+                subj_forearm.append(trialF_list)
+                subj_wrist.append(trialW_list)
 
             completeSet_forearm.append(subj_forearm)
             completeSet_wrist.append(subj_wrist)
@@ -65,17 +78,28 @@ def main():
     for subj_idx in range(len(completeSet_forearm)):
         subjF, subjW = [], []
         for g_idx in range(len(gestures)):
-            # Handle potential NaN values by converting them to zero
-            oneF = np.nan_to_num(completeSet_forearm[subj_idx][g_idx].T)
-            oneW = np.nan_to_num(completeSet_wrist[subj_idx][g_idx].T)
+            trial_preF, trial_preW = [], []
+            for trial_idx in range(len(completeSet_forearm[subj_idx][g_idx])):
+                oneF = completeSet_forearm[subj_idx][g_idx][trial_idx].T
+                oneW = completeSet_wrist[subj_idx][g_idx][trial_idx].T
 
-            # Apply the preprocessing function to each channel
-            # This is an array of shape (num_channels, num_samples)
-            preF = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneF])
-            preW = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneW])
+                if oneF.size == 0 or oneW.size == 0:
+                    print("empty trial")
+                    continue  # Skip empty trials
 
-            subjF.append(preF.T)
-            subjW.append(preW.T)
+                # Handle potential NaN values by converting them to zero
+                oneF = np.nan_to_num(oneF)
+                oneW = np.nan_to_num(oneW)
+
+                # Apply the preprocessing function to each channel
+                preF = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneF])
+                preW = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneW])
+
+                trial_preF.append(preF.T)
+                trial_preW.append(preW.T)
+            
+            subjF.append(trial_preF)
+            subjW.append(trial_preW)
 
         preprocess_forearm.append(subjF)
         preprocess_wrist.append(subjW)
@@ -90,28 +114,29 @@ def main():
     for subj_idx in range(len(preprocess_forearm)):
         featF, featW = [], []
         for g_idx in range(len(gestures)):
-            f11, f12 = [], []
+            trial_featF, trial_featW = [], []
+            for trial_idx in range(len(preprocess_forearm[subj_idx][g_idx])):
+                f11, f12 = [], []
 
-            oneF = preprocess_forearm[subj_idx][g_idx]
-            oneW = preprocess_wrist[subj_idx][g_idx]
+                oneF = preprocess_forearm[subj_idx][g_idx][trial_idx]
+                oneW = preprocess_wrist[subj_idx][g_idx][trial_idx]
 
-            # Forearm channels
-            for iChannelNum in range(oneF.shape[1]):
-                # Decompose signal using DWT with bior3.3 wavelet at level 4
-                coeffs = pywt.wavedec(oneF[:, iChannelNum], "bior3.3", level=4)
-                # Apply jfemg functions to each set of coefficients
-                features = [[jfemg(fn, coeff) for fn in ["mav", "wl", "emav", "ewl", "rms", "zc", "ssc"]] for coeff in coeffs]
-                f11.append(features)
-            featF.append(np.array(f11))
+                # Forearm channels
+                for iChannelNum in range(oneF.shape[1]):
+                    coeffs = pywt.wavedec(oneF[:, iChannelNum], "bior3.3", level=4)
+                    features = [[jfemg(fn, coeff) for fn in ["mav", "wl", "emav", "ewl", "rms", "zc", "ssc"]] for coeff in coeffs]
+                    f11.append(features)
+                trial_featF.append(np.array(f11))
 
-            # Wrist channels
-            for jChannelNum in range(oneW.shape[1]):
-                # Decompose signal using DWT with bior3.3 wavelet at level 4
-                coeffs = pywt.wavedec(oneW[:, jChannelNum], "bior3.3", level=4)
-                # Apply jfemg functions to each set of coefficients
-                features = [[jfemg(fn, coeff) for fn in ["mav", "wl", "emav", "ewl", "rms", "zc", "ssc"]] for coeff in coeffs]
-                f12.append(features)
-            featW.append(np.array(f12))
+                # Wrist channels
+                for jChannelNum in range(oneW.shape[1]):
+                    coeffs = pywt.wavedec(oneW[:, jChannelNum], "bior3.3", level=4)
+                    features = [[jfemg(fn, coeff) for fn in ["mav", "wl", "emav", "ewl", "rms", "zc", "ssc"]] for coeff in coeffs]
+                    f12.append(features)
+                trial_featW.append(np.array(f12))
+
+            featF.append(trial_featF)
+            featW.append(trial_featW)
 
         FV_forearm.append(featF)
         FV_wrist.append(featW)
