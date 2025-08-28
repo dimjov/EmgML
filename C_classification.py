@@ -1,226 +1,206 @@
+# C_classification.py (with Train-Validation-Test Split)
 import os
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 from sklearn.multiclass import OneVsOneClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import Pipeline
 import warnings
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import seaborn as sns
 
 # Suppress all future warnings to reduce clutter
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-def stats_of_measure(cm, gesture_names, model_name):
+def prepare_data(forearm_features, wrist_features, gestures):
     """
-    Calculates and prints classification metrics from a confusion matrix.
-    This function mimics the output format of the provided table.
+    Step 1: Flattens the feature vectors and creates a corresponding label vector.
 
-    Inputs:
-    cm (numpy.ndarray): The confusion matrix.
-    gesture_names (list): List of class names.
-    model_name (str): The name of the model for the table title.
+    Parameters:
+        forearm_features (np.ndarray): The multi-dimensional forearm feature vectors.
+        wrist_features (np.ndarray): The multi-dimensional wrist feature vectors.
+        gestures (list): A list of gesture labels.
 
     Returns:
-    dict: A dictionary containing calculated metrics.
+        tuple: A tuple containing the flattened feature matrix (X) and label vector (y).
     """
-    n_classes = cm.shape[0]
-    
-    # Calculate True Positive, False Positive, False Negative, True Negative
-    TP = np.diag(cm)
-    FP = np.sum(cm, axis=0) - TP
-    FN = np.sum(cm, axis=1) - TP
-    TN = np.sum(cm.sum()) - (TP + FP + FN)
-
-    # Per-class metrics
-    precision = np.nan_to_num(TP / (TP + FP))
-    sensitivity = np.nan_to_num(TP / (TP + FN))
-    specificity = np.nan_to_num(TN / (TN + FP))
-    accuracy = np.nan_to_num((TP + TN) / (TP + TN + FP + FN))
-    f1_score = np.nan_to_num(2 * (precision * sensitivity) / (precision + sensitivity))
-
-    # Macro-averaged metrics
-    macro_precision = np.mean(precision)
-    macro_sensitivity = np.mean(sensitivity)
-    macro_accuracy = np.mean(accuracy)
-    macro_f1_score = np.mean(f1_score)
-
-    # Create and print the table
-    print("\n" + "=" * 80)
-    print(f"{'':<20}{model_name} (Three Sessions){'':>25}")
-    print("-" * 80)
-    
-    table_data = {
-        'Evaluation Metrics': ['True Positive', 'False Positive', 'False Negative', 'True Negative', 'Precision', 'Sensitivity', 'Accuracy', 'F-measure'],
-    }
-    
-    # Use a DataFrame to simplify printing and formatting
-    df = pd.DataFrame({
-        'Evaluation Metrics': ['True Positive', 'False Positive', 'False Negative', 'True Negative',
-                               'Precision', 'Sensitivity', 'Accuracy', 'F-measure'],
-    })
-
-    # Add per-class data
-    for i, gesture in enumerate(gesture_names):
-        df[gesture] = [
-            int(TP[i]), int(FP[i]), int(FN[i]), int(TN[i]),
-            f"{precision[i]:.5f}", f"{sensitivity[i]:.5f}", f"{accuracy[i]:.5f}", f"{f1_score[i]:.5f}"
-        ]
-    
-    # Add Macro Average column
-    df['Macro Average'] = [
-        int(np.mean(TP)), int(np.mean(FP)), int(np.mean(FN)), int(np.mean(TN)),
-        f"{macro_precision:.5f}", f"{macro_sensitivity:.5f}", f"{macro_accuracy:.5f}", f"{macro_f1_score:.5f}"
-    ]
-
-    # Print the DataFrame without index and with a clean header
-    print(df.to_string(index=False))
-
-    print("=" * 80)
-
-    stats = {
-        'Overall Accuracy': np.sum(TP) / np.sum(cm),
-        'Macro Precision': macro_precision,
-        'Macro Sensitivity': macro_sensitivity,
-        'Macro F1-Score': macro_f1_score,
-        'Per-Class Precision': precision,
-        'Per-Class Sensitivity': sensitivity,
-        'Per-Class Accuracy': accuracy,
-        'Per-Class F1-Score': f1_score,
-    }
-    return stats
-
-
-def cv_eval_model(X, y, model_name, base_estimator, use_lda_dimred=True):
-    """
-    Performs 5-fold stratified cross-validation and evaluates a model.
-
-    Inputs:
-    X (numpy.ndarray): The feature matrix.
-    y (numpy.ndarray): The class labels.
-    model_name (str): Name of the model for printing.
-    base_estimator (sklearn.base.BaseEstimator): The classifier to evaluate.
-    use_lda_dimred (bool): Flag to perform LDA dimensionality reduction.
-    """
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    
-    accuracies = []
-    all_true_labels = []
-    all_predicted_labels = []
-
-    class_order = sorted(np.unique(y))
-    
-    print(f"\n--- {model_name} Results ---")
-    
-    for fold, (train_index, test_index) in enumerate(skf.split(X, y)):
-        X_train, X_test = X[train_index], X[test_index]
-        y_train, y_test = y[train_index], y[test_index]
-        
-        # Create a pipeline with StandardScaler, LDA (if requested), and the classifier
-        pipeline_steps = [StandardScaler()]
-        if use_lda_dimred:
-            # LDA automatically determines the correct number of components for
-            # each binary subproblem in the OneVsOneClassifier wrapper.
-            pipeline_steps.append(LinearDiscriminantAnalysis())
-        
-        pipeline_steps.append(base_estimator)
-        
-        pipeline = OneVsOneClassifier(make_pipeline(*pipeline_steps))
-        
-        # Fit the pipeline and make predictions
-        pipeline.fit(X_train, y_train)
-        y_pred = pipeline.predict(X_test)
-        
-        fold_accuracy = accuracy_score(y_test, y_pred)
-        accuracies.append(fold_accuracy)
-        print(f"Fold {fold+1}: Accuracy = {fold_accuracy:.4f}")
-        
-        all_true_labels.extend(y_test)
-        all_predicted_labels.extend(y_pred)
-        
-    mean_accuracy = np.mean(accuracies)
-    std_accuracy = np.std(accuracies)
-    
-    # Generate aggregate confusion matrix and stats
-    cm = confusion_matrix(all_true_labels, all_predicted_labels, labels=class_order)
-    stats = stats_of_measure(cm, class_order, model_name)
-    
-    print("-" * 65)
-    print(f"Mean Fold Accuracy: {mean_accuracy:.4f} (+/- {std_accuracy:.4f})")
-    print(f"Overall Accuracy: {stats['Overall Accuracy']:.4f}")
-    print("-" * 65)
-    
-def main():
-    """
-    Main function to load features, reshape them, and run all classification models.
-    """
-    try:
-        data = np.load("Feature_vector_allSessions.npz", allow_pickle=True)
-        FV_forearm = data["FV_forearm"]
-        FV_wrist = data["FV_wrist"]
-    except FileNotFoundError:
-        print("Error: 'Feature_vector_allSessions.npz' not found.")
-        print("Please run B_feature_extraction.py first to generate the required file.")
-        return
-    except KeyError:
-        print("Error: 'FV_forearm' or 'FV_wrist' keys not found in the .npz file.")
-        print("Please check the output of B_feature_extraction.py.")
-        return
-
-    gestures = [8, 9, 10, 15, 16]
-    motion_names = [
-        "Lateral Prehension", "Thumb Adduction", "Thumb and Little Finger Opposition",
-        "Thumb and Index Finger Opposition", "Thumb and Index Finger Extension", "Thumb and Little Finger Extension",
-        "Index and Middle Finger Extension", "Little Finger Extension", "Index Finger Extension",
-        "Thumb Finger Extension", "Wrist Extension", "Wrist Flexion",
-        "Forearm Supination", "Forearm Pronation", "Hand Open",
-        "Hand Close", "Rest"
-    ]
-    selected_motion_names = [motion_names[g - 1] for g in gestures]
-
-    print("Reshaping feature vectors for ML models...")
-    
     X = []
     y = []
     
-    for p_idx, (p_forearm_data, p_wrist_data) in enumerate(zip(FV_forearm, FV_wrist)):
-        for g_idx, (g_forearm_features, g_wrist_features) in enumerate(zip(p_forearm_data, p_wrist_data)):
-            # The data structure now includes trials. We need to loop through them.
-            for trial_data_forearm, trial_data_wrist in zip(g_forearm_features, g_wrist_features):
-                forearm_vector = trial_data_forearm.flatten()
-                wrist_vector = trial_data_wrist.flatten()
+    # Iterate through the nested data structure to flatten each trial's features
+    for participant_idx in range(len(forearm_features)):
+        for gesture_idx in range(len(forearm_features[participant_idx])):
+            for trial_idx in range(len(forearm_features[participant_idx][gesture_idx])):
+                # Flatten the features for a single trial from both sensors
+                forearm_flat = forearm_features[participant_idx][gesture_idx][trial_idx].flatten()
+                wrist_flat = wrist_features[participant_idx][gesture_idx][trial_idx].flatten()
                 
-                combined_feature_vector = np.concatenate((forearm_vector, wrist_vector))
+                # Combine forearm and wrist features into a single vector
+                combined_features = np.concatenate((forearm_flat, wrist_flat))
+                X.append(combined_features)
                 
-                X.append(combined_feature_vector)
-                y.append(selected_motion_names[g_idx])
-                
-    X = np.array(X)
-    y = np.array(y)
+                # Assign the corresponding gesture label
+                y.append(gestures[gesture_idx])
     
-    print(f"Total samples prepared for ML: {X.shape[0]}")
-    print(f"Shape of predictors (X): {X.shape}")
-    print(f"Shape of labels (y): {y.shape}")
-    
-    # Define the classifiers
-    knn_base = KNeighborsClassifier(n_neighbors=5)
-    nb_base = GaussianNB()
-    svm_base = SVC(kernel="linear", random_state=42, probability=False)
+    return np.array(X), np.array(y)
 
-    # The MATLAB code's LDA is not wrapped in fitcecoc. 
-    # The LDA is a standalone step for dimensionality reduction.
-    # We will replicate this by training the LDA model separately.
+def evaluate_model(y_test, y_pred, class_order):
+    # Calculate the confusion matrix
+    cm = confusion_matrix(
+        y_test, 
+        y_pred, 
+        labels=class_order
+    )
+
+    TP = np.diag(cm)                    # True positives (TP)
+    FP = np.sum(cm, axis=0) - TP        # False Positives (FP)
+    FN = np.sum(cm, axis=1) - TP        # False Negatives (FN)
+    TN = np.sum(cm) - (TP + FP + FN)    # True Negatives (TN)
+
+    # Print TP, FP, FN, TN for each gesture/class
+    for i, cls in enumerate(class_order):
+        print(f"\nClass {cls}:")
+        print(f"    TP = {TP[i]}")
+        print(f"    FP = {FP[i]}")
+        print(f"    FN = {FN[i]}")
+        print(f"    TN = {TN[i]}")
     
-    # Run the classification models
-    # The LDA n_components is set to the number of classes - 1
-    # This is a standard practice and reflects what MATLAB's LDA does by default
-    cv_eval_model(X, y, "KNN", knn_base, use_lda_dimred=True)
-    cv_eval_model(X, y, "Naive Bayes", nb_base, use_lda_dimred=True)
-    cv_eval_model(X, y, "SVM", svm_base, use_lda_dimred=True)
+    # Print the confusion matrix
+    print(cm)
+
+    # === Build evaluation table ===
+    metrics = []
+    for i, cls in enumerate(class_order):
+        precision = TP[i] / (TP[i] + FP[i]) if (TP[i] + FP[i]) > 0 else 0
+        recall = TP[i] / (TP[i] + FN[i]) if (TP[i] + FN[i]) > 0 else 0
+        accuracy = (TP[i] + TN[i]) / (TP[i] + FP[i] + FN[i] + TN[i])
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
+
+        metrics.append([
+            TP[i], FP[i], FN[i], TN[i],
+            precision, recall, accuracy, f1
+        ])
+
+    # Macro averages
+    macro = np.mean(metrics, axis=0)
+
+    # Create DataFrame
+    df = pd.DataFrame(metrics, 
+                      index=[f"Class {cls}" for cls in class_order],
+                      columns=["True Positive", "False Positive", "False Negative", "True Negative",
+                               "Precision", "Sensitivity", "Accuracy", "F-measure"])
+
+    # Add macro average row
+    df.loc["Macro Average"] = macro
+
+    print("\n============ Evaluation Table ============")
+    print(df.to_string(float_format="%.5f"))
+
+    return
+
+def SVM_classifier(X_train_reduced, X_test_reduced, y_train):
+    # Initialize the SVM classifier
+    svm_model = SVC(kernel='linear', random_state=42)
     
+    # Train the SVM model on the reduced training data
+    svm_model.fit(X_train_reduced, y_train)
+    
+    # Make predictions on the reduced test data
+    y_pred = svm_model.predict(X_test_reduced)
+
+    return y_pred
+
+def main():
+    """
+    Main function to orchestrate the entire classification process.
+    """
+    # Step 1: Load the pre-processed data
+    print("============ Step 1: Loading and preparing data ============")
+    data = np.load("Feature_vector_allSessions.npz", allow_pickle=True)
+    forearm_fv = data["FV_forearm"]
+    wrist_fv = data["FV_wrist"]
+
+    # Chosen gestures from B_feature_extraction.py
+    gestures = [8, 9, 10, 15, 16]
+    X, y = prepare_data(forearm_fv, wrist_fv, gestures)
+    
+    print(f"Shape of feature matrix X: {X.shape}")
+    print(f"Shape of label vector y: {y.shape}")
+    
+
+    # Step 2: 70/30 Train-Test Split
+    print("============ Step 2: 70/30 Train-Test Split ============")
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y
+    )
+    
+    class_order = sorted(np.unique(y))
+    
+    print(f"Train set shape: {X_train.shape}")
+    print(f"Test set shape: {X_test.shape}")
+    
+    # Scale the data
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    # Perform LDA for dimensionality reduction
+    # The number of components is set to the number of classes - 1.
+    lda = LinearDiscriminantAnalysis(n_components=len(gestures) - 1)
+    X_train_reduced = lda.fit_transform(X_train_scaled, y_train)
+    X_test_reduced = lda.transform(X_test_scaled)
+    
+    print(f"Original feature space dimension: {X_train.shape[1]}")
+    print(f"Reduced feature space dimension (after LDA): {X_train_reduced.shape[1]}")
+    
+    # Build SVM classifier, train it and make predictions
+    y_pred = SVM_classifier(X_train_reduced, X_test_reduced, y_train)
+    
+    # Evaluate the model (performance)
+    evaluate_model(y_test, y_pred, class_order)
+
+    # global counts
+    # TP_total = np.sum(TP)
+    # FP_total = np.sum(FP)
+    # FN_total = np.sum(FN)
+    # TN_total = np.sum(TN)
+
+    # print("\nOverall counts:")
+    # print(f"TP = {TP_total}, FP = {FP_total}, FN = {FN_total}, TN = {TN_total}")
+
+
+    # cm = svm_cm.astype("float") / svm_cm.sum(axis=1)[:, np.newaxis]
+
+    # fig, ax = plt.subplots(figsize=(8, 6))
+    # sns.heatmap(cm, annot=svm_cm, fmt="d", cmap="Blues", 
+    #             xticklabels=class_order, yticklabels=class_order, cbar=False, ax=ax)
+
+    # # Highlight TP, FP, FN, TN
+    # for i in range(len(class_order)):
+    #     for j in range(len(class_order)):
+    #         value = svm_cm[i, j]
+    #         if i == j and value > 0:  
+    #             ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="green", lw=3))  # TP
+    #         elif i != j and value > 0:
+    #             if i < j:
+    #                 ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="red", lw=2))  # FP
+    #             else:
+    #                 ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="orange", lw=2))  # FN
+
+    # ax.set_xlabel("Predicted gesture")
+    # ax.set_ylabel("True gesture")
+    # ax.set_title("LDA-SVM model confusion matrix")
+
+    # plt.show()
+
+    
+
 if __name__ == "__main__":
     main()
