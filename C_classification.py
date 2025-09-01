@@ -1,5 +1,6 @@
 # C_classification.py (with Train-Validation-Test Split)
 import os
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -51,7 +52,10 @@ def prepare_data(forearm_features, wrist_features, gestures):
     
     return np.array(X), np.array(y)
 
-def evaluate_model(y_test, y_pred, class_order):
+def evaluate_model(y_test, y_pred, class_order, model_name):
+    os.makedirs("./plots", exist_ok=True)
+    os.makedirs("./models", exist_ok=True)
+
     # Calculate the confusion matrix
     cm = confusion_matrix(
         y_test, 
@@ -100,28 +104,79 @@ def evaluate_model(y_test, y_pred, class_order):
     # Add macro average row
     df.loc["Macro Average"] = macro
 
-    print("\n============ Evaluation Table ============")
-    print(df.to_string(float_format="%.5f"))
+    # === Save evaluation table to Excel ===
+    table_path = os.path.join("./models", f"{model_name}_evaluation.xlsx")
+    df.to_excel(table_path, float_format="%.5f")
+    print(f"Evaluation table saved to {table_path}")
 
-    return
+    # === Save confusion matrix plot ===
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=class_order, yticklabels=class_order, cbar=False)
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title(f"Confusion Matrix - {model_name}")
 
-def SVM_classifier(X_train_reduced, X_test_reduced, y_train):
+    plot_path = os.path.join("./plots", f"{model_name}_confusion_matrix.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Confusion matrix plot saved to {plot_path}")
+
+    return df
+
+def SVM_classifier(X_train_reduced, X_test_reduced, y_train, model_name="lda-svm_5gesture_model.pkl"):
     # Initialize the SVM classifier
     svm_model = SVC(kernel='linear', random_state=42)
     
     # Train the SVM model on the reduced training data
     svm_model.fit(X_train_reduced, y_train)
+
+    # Save the trained model
+    model_path = os.path.join("./models", model_name)
+    joblib.dump(svm_model, model_path)
+    print(f"LDA-SVM model saved to {model_path}")
     
     # Make predictions on the reduced test data
     y_pred = svm_model.predict(X_test_reduced)
 
     return y_pred
 
+def NaiveBayes_classifier(X_train_reduced, X_test_reduced, y_train, model_name="lda-naivebayes_5gesture_model.pkl"):
+    # Initialize the Naive Bayes classifier
+    nb_model = GaussianNB()
+
+    # Train the Naive Bayes model
+    nb_model.fit(X_train_reduced, y_train)
+
+    # Save the trained model
+    model_path = os.path.join("./models", model_name)
+    joblib.dump(nb_model, model_path)
+    print(f"LDA-Naive Bayes model saved to {model_path}")
+
+    # Make predictions on the reduced test data
+    y_pred = nb_model.predict(X_test_reduced)
+
+    return y_pred
+
+def KNN_classifier(X_train_reduced, X_test_reduced, y_train, model_name="lda-knn_5gesture_model.pkl", n_neighbors=5):
+    # Initialize the KNN classifier
+    knn_model = KNeighborsClassifier(n_neighbors=n_neighbors)
+
+    # Train the KNN model
+    knn_model.fit(X_train_reduced, y_train)
+
+    # Save the trained model
+    model_path = os.path.join("./models", model_name)
+    joblib.dump(knn_model, model_path)
+    print(f"LDA-KNN model saved to {model_path}")
+
+    # Make predictions on the reduced test data
+    y_pred = knn_model.predict(X_test_reduced)
+
+    return y_pred
+
 def main():
-    """
-    Main function to orchestrate the entire classification process.
-    """
-    # Step 1: Load the pre-processed data
+    # Load the pre-processed data
     print("============ Step 1: Loading and preparing data ============")
     data = np.load("Feature_vector_allSessions.npz", allow_pickle=True)
     forearm_fv = data["FV_forearm"]
@@ -160,11 +215,20 @@ def main():
     print(f"Original feature space dimension: {X_train.shape[1]}")
     print(f"Reduced feature space dimension (after LDA): {X_train_reduced.shape[1]}")
     
-    # Build SVM classifier, train it and make predictions
+    # Create models directory for saving the trained models
+    os.makedirs("./models", exist_ok=True)
+
+    # Build SVM classifier, train it, make predictions and and evaluate it
     y_pred = SVM_classifier(X_train_reduced, X_test_reduced, y_train)
-    
-    # Evaluate the model (performance)
-    evaluate_model(y_test, y_pred, class_order)
+    evaluate_model(y_test, y_pred, class_order, "LDA-SVM")
+
+    # Build Naive Bayes classifier, train it, make predictions and and evaluate it
+    y_pred = NaiveBayes_classifier(X_train_reduced, X_test_reduced, y_train)
+    evaluate_model(y_test, y_pred, class_order, "LDA-Naive Bayes")
+
+    # Build K-Nearest neighbour classifier, train it, make predictions and and evaluate it
+    y_pred = KNN_classifier(X_train_reduced, X_test_reduced, y_train)
+    evaluate_model(y_test, y_pred, class_order, "LDA-KNN")
 
     # global counts
     # TP_total = np.sum(TP)
