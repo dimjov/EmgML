@@ -22,40 +22,40 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 def prepare_data(forearm_features, wrist_features, gestures):
     """
-    Step 1: Flattens the feature vectors and creates a corresponding label vector.
-
-    Parameters:
-        forearm_features (np.ndarray): The multi-dimensional forearm feature vectors.
-        wrist_features (np.ndarray): The multi-dimensional wrist feature vectors.
-        gestures (list): A list of gesture labels.
-
-    Returns:
-        tuple: A tuple containing the flattened feature matrix (X) and label vector (y).
+    Summarize features per trial:
+    - Average across wavelet levels
+    - Average across channels
+    - Concatenate forearm + wrist features
+    Returns fixed-length feature vectors.
     """
-    X = []
-    y = []
-    
-    # Iterate through the nested data structure to flatten each trial's features
+    X, y = [], []
+    n_gestures = len(gestures)
+
     for participant_idx in range(len(forearm_features)):
-        for gesture_idx in range(len(forearm_features[participant_idx])):
-            for trial_idx in range(len(forearm_features[participant_idx][gesture_idx])):
-                # Flatten the features for a single trial from both sensors
-                forearm_flat = forearm_features[participant_idx][gesture_idx][trial_idx].flatten()
-                wrist_flat = wrist_features[participant_idx][gesture_idx][trial_idx].flatten()
-                
-                # Combine forearm and wrist features into a single vector
-                combined_features = np.concatenate((forearm_flat, wrist_flat))
+        for g_idx, gesture in enumerate(gestures):
+            n_trials = forearm_features[participant_idx][g_idx].shape[0]
+
+            for trial_idx in range(n_trials):
+                # Forearm features: (channels, levels, features)
+                f_trial = forearm_features[participant_idx][g_idx][trial_idx]
+                # Wrist features: same structure
+                w_trial = wrist_features[participant_idx][g_idx][trial_idx]
+
+                # Average over channels and levels → (features,)
+                f_summary = np.mean(f_trial, axis=(0, 1))
+                w_summary = np.mean(w_trial, axis=(0, 1))
+
+                # Concatenate to form trial-level feature vector
+                combined_features = np.concatenate((f_summary, w_summary))
+
                 X.append(combined_features)
-                
-                # Assign the corresponding gesture label
-                y.append(gestures[gesture_idx])
-    
-    return np.array(X), np.array(y)
+                y.append(gesture)
+
+    X = np.array(X)
+    y = np.array(y)
+    return X, y
 
 def evaluate_model(y_test, y_pred, class_order, model_name):
-    os.makedirs("./plots", exist_ok=True)
-    os.makedirs("./models", exist_ok=True)
-
     # Calculate the confusion matrix
     cm = confusion_matrix(
         y_test, 
@@ -176,94 +176,67 @@ def KNN_classifier(X_train_reduced, X_test_reduced, y_train, model_name="lda-knn
     return y_pred
 
 def main():
-    # Load the pre-processed data
-    print("============ Step 1: Loading and preparing data ============")
-    data = np.load("Feature_vector_allSessions.npz", allow_pickle=True)
+    # Load pre-processed data
+    print("============ Step 1: Loading participant-level features ============")
+    data = np.load("Feature_vector_allParticipants.npz", allow_pickle=True)
     forearm_fv = data["FV_forearm"]
     wrist_fv = data["FV_wrist"]
 
-    # Chosen gestures from B_feature_extraction.py
-    gestures = [8, 9, 10, 15, 16]
-    X, y = prepare_data(forearm_fv, wrist_fv, gestures)
-    
-    print(f"Shape of feature matrix X: {X.shape}")
-    print(f"Shape of label vector y: {y.shape}")
-    
+    gestures = [8, 9, 10, 15, 16]  # selected gestures
 
-    # Step 2: 70/30 Train-Test Split
-    print("============ Step 2: 70/30 Train-Test Split ============")
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42, stratify=y
-    )
+    # ----------------- Step 2: Participant-level 70/30 split -----------------
+    participants = np.arange(len(forearm_fv))  # 0..42
+    train_subj, test_subj = train_test_split(participants, test_size=0.3, random_state=42)
+
+    X_train, y_train, X_test, y_test = [], [], [], []
+
+    for idx, (f_feat, w_feat) in enumerate(zip(forearm_fv, wrist_fv)):
+        X_subj, y_subj = prepare_data([f_feat], [w_feat], gestures)  # treat each participant as one entry
+        if idx in train_subj:
+            X_train.append(X_subj)
+            y_train.append(y_subj)
+        else:
+            X_test.append(X_subj)
+            y_test.append(y_subj)
     
-    class_order = sorted(np.unique(y))
-    
+    # Flatten lists into arrays
+    X_train = np.vstack(X_train)
+    y_train = np.hstack(y_train)
+    X_test = np.vstack(X_test)
+    y_test = np.hstack(y_test)
+
     print(f"Train set shape: {X_train.shape}")
     print(f"Test set shape: {X_test.shape}")
-    
-    # Scale the data
+
+    # ----------------- Step 3: Scale features -----------------
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
-    
-    # Perform LDA for dimensionality reduction
-    # The number of components is set to the number of classes - 1.
+
+    # ----------------- Step 4: LDA for dimensionality reduction -----------------
     lda = LinearDiscriminantAnalysis(n_components=len(gestures) - 1)
     X_train_reduced = lda.fit_transform(X_train_scaled, y_train)
     X_test_reduced = lda.transform(X_test_scaled)
-    
+
     print(f"Original feature space dimension: {X_train.shape[1]}")
     print(f"Reduced feature space dimension (after LDA): {X_train_reduced.shape[1]}")
-    
-    # Create models directory for saving the trained models
-    os.makedirs("./models", exist_ok=True)
 
-    # Build SVM classifier, train it, make predictions and and evaluate it
+    # Create directories for models and plots
+    os.makedirs("./models", exist_ok=True)
+    os.makedirs("./plots", exist_ok=True)
+    class_order = sorted(np.unique(y_train))
+
+    # SVM
     y_pred = SVM_classifier(X_train_reduced, X_test_reduced, y_train)
     evaluate_model(y_test, y_pred, class_order, "LDA-SVM")
 
-    # Build Naive Bayes classifier, train it, make predictions and and evaluate it
+    # Naive Bayes
     y_pred = NaiveBayes_classifier(X_train_reduced, X_test_reduced, y_train)
     evaluate_model(y_test, y_pred, class_order, "LDA-Naive Bayes")
 
-    # Build K-Nearest neighbour classifier, train it, make predictions and and evaluate it
+    # KNN
     y_pred = KNN_classifier(X_train_reduced, X_test_reduced, y_train)
     evaluate_model(y_test, y_pred, class_order, "LDA-KNN")
-
-    # global counts
-    # TP_total = np.sum(TP)
-    # FP_total = np.sum(FP)
-    # FN_total = np.sum(FN)
-    # TN_total = np.sum(TN)
-
-    # print("\nOverall counts:")
-    # print(f"TP = {TP_total}, FP = {FP_total}, FN = {FN_total}, TN = {TN_total}")
-
-
-    # cm = svm_cm.astype("float") / svm_cm.sum(axis=1)[:, np.newaxis]
-
-    # fig, ax = plt.subplots(figsize=(8, 6))
-    # sns.heatmap(cm, annot=svm_cm, fmt="d", cmap="Blues", 
-    #             xticklabels=class_order, yticklabels=class_order, cbar=False, ax=ax)
-
-    # # Highlight TP, FP, FN, TN
-    # for i in range(len(class_order)):
-    #     for j in range(len(class_order)):
-    #         value = svm_cm[i, j]
-    #         if i == j and value > 0:  
-    #             ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="green", lw=3))  # TP
-    #         elif i != j and value > 0:
-    #             if i < j:
-    #                 ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="red", lw=2))  # FP
-    #             else:
-    #                 ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="orange", lw=2))  # FN
-
-    # ax.set_xlabel("Predicted gesture")
-    # ax.set_ylabel("True gesture")
-    # ax.set_title("LDA-SVM model confusion matrix")
-
-    # plt.show()
-
     
 
 if __name__ == "__main__":

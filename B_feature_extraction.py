@@ -24,16 +24,19 @@ def main():
     # Thumb Finger Extension, Hand Open, Hand Close.
     gestures = [8, 9, 10, 15, 16]
 
-    # Storage containers for all participants' data
-    completeSet_forearm = []
-    completeSet_wrist = []
+    FV_forearm = []
+    FV_wrist = []
 
-    # ----------------- Load all sessions' data -----------------
-    for sessionNum in range(1, noOfSessions + 1):
-        sessionFolder = os.path.join(mainDataFolder, f"Session{sessionNum}_Converted")
-        print(f"Processing session {sessionNum} from {sessionFolder}")
+    # ----------------- Loop through participants -----------------
+    for participantNum in range(1, noOfParticipants + 1):
+        participant_forearm_all_sessions = []
+        participant_wrist_all_sessions = []
 
-        for participantNum in range(1, noOfParticipants + 1):
+        print(f"Processing Participant {participantNum}...")
+
+        # ----------------- Load all sessions for this participant -----------------
+        for sessionNum in range(1, noOfSessions + 1):
+            sessionFolder = os.path.join(mainDataFolder, f"Session{sessionNum}_Converted")
             participantFile = f"session{sessionNum}_participant{participantNum}.npz"
             filePath = os.path.join(sessionFolder, participantFile)
 
@@ -46,80 +49,57 @@ def main():
 
             subj_forearm, subj_wrist = [], []
             for g in gestures:
-                # Loop through all 7 trials for each gesture
                 trialF_list, trialW_list = [], []
                 for trialNum in range(1, noOfTrials + 1):
                     trialF = forearmData.get((trialNum, g))
                     trialW = wristData.get((trialNum, g))
-                    
                     if trialF is not None and trialW is not None:
                         trialF_list.append(trialF)
                         trialW_list.append(trialW)
-                    else:
-                        print(f"Missing data for Trial {trialNum}, Gesture {g}, Participant {participantNum}, skipping this trial.")
-                        # Append None or an empty array to maintain structure if needed
-                        # For now, we just skip it, which might cause length mismatches later. 
-                        # A better approach would be to fill with NaN or zeros.
-                        pass
-                
                 subj_forearm.append(trialF_list)
                 subj_wrist.append(trialW_list)
 
-            completeSet_forearm.append(subj_forearm)
-            completeSet_wrist.append(subj_wrist)
+            participant_forearm_all_sessions.append(subj_forearm)
+            participant_wrist_all_sessions.append(subj_wrist)
 
-            print(f"Loaded: Session {sessionNum} Participant {participantNum}")
+        # ----------------- Combine all sessions for this participant -----------------
+        # Result: gestures × (trials × sessions) × channels × levels × features
+        combined_forearm = []
+        combined_wrist = []
 
-    # ----------------- Preprocessing -----------------
-    # Filters and rectifies the raw EMG signals
-    preprocess_forearm = []
-    preprocess_wrist = []
+        for g_idx in range(len(gestures)):
+            # Gather trials across sessions
+            trialsF = []
+            trialsW = []
+            for session_dataF, session_dataW in zip(participant_forearm_all_sessions, participant_wrist_all_sessions):
+                trialsF.extend(session_dataF[g_idx])
+                trialsW.extend(session_dataW[g_idx])
+            combined_forearm.append(trialsF)
+            combined_wrist.append(trialsW)
 
-    for subj_idx in range(len(completeSet_forearm)):
-        subjF, subjW = [], []
+        # ----------------- Preprocessing -----------------
+        preprocessedF, preprocessedW = [], []
         for g_idx in range(len(gestures)):
             trial_preF, trial_preW = [], []
-            for trial_idx in range(len(completeSet_forearm[subj_idx][g_idx])):
-                oneF = completeSet_forearm[subj_idx][g_idx][trial_idx].T
-                oneW = completeSet_wrist[subj_idx][g_idx][trial_idx].T
+            for trial_idx in range(len(combined_forearm[g_idx])):
+                oneF = np.nan_to_num(combined_forearm[g_idx][trial_idx].T)
+                oneW = np.nan_to_num(combined_wrist[g_idx][trial_idx].T)
+                preF = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneF]).T
+                preW = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneW]).T
+                trial_preF.append(preF)
+                trial_preW.append(preW)
+            preprocessedF.append(trial_preF)
+            preprocessedW.append(trial_preW)
 
-                if oneF.size == 0 or oneW.size == 0:
-                    print("empty trial")
-                    continue  # Skip empty trials
-
-                # Handle potential NaN values by converting them to zero
-                oneF = np.nan_to_num(oneF)
-                oneW = np.nan_to_num(oneW)
-
-                # Apply the preprocessing function to each channel
-                preF = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneF])
-                preW = np.array([preprocess_emg(ch, fs, 10, 450) for ch in oneW])
-
-                trial_preF.append(preF.T)
-                trial_preW.append(preW.T)
-            
-            subjF.append(trial_preF)
-            subjW.append(trial_preW)
-
-        preprocess_forearm.append(subjF)
-        preprocess_wrist.append(subjW)
-
-        print(f"Preprocessed participant {subj_idx+1}/{len(completeSet_forearm)}")
-
-    # ----------------- Feature extraction -----------------
-    # Extracts features using Discrete Wavelet Transform
-    FV_forearm = []
-    FV_wrist = []
-
-    for subj_idx in range(len(preprocess_forearm)):
+        # ----------------- Feature Extraction -----------------
         featF, featW = [], []
         for g_idx in range(len(gestures)):
             trial_featF, trial_featW = [], []
-            for trial_idx in range(len(preprocess_forearm[subj_idx][g_idx])):
+            for trial_idx in range(len(preprocessedF[g_idx])):
                 f11, f12 = [], []
 
-                oneF = preprocess_forearm[subj_idx][g_idx][trial_idx]
-                oneW = preprocess_wrist[subj_idx][g_idx][trial_idx]
+                oneF = preprocessedF[g_idx][trial_idx]
+                oneW = preprocessedW[g_idx][trial_idx]
 
                 # Forearm channels
                 for iChannelNum in range(oneF.shape[1]):
@@ -141,11 +121,11 @@ def main():
         FV_forearm.append(featF)
         FV_wrist.append(featW)
 
-        print(f"Extracted features for participant {subj_idx+1}")
+        print(f"Extracted features for Participant {participantNum}")
 
-    # Save combined features for all sessions
-    np.savez_compressed("Feature_vector_allSessions.npz", FV_forearm=FV_forearm, FV_wrist=FV_wrist)
-    print("Feature vectors saved for all sessions as .npz")
+    # ----------------- Save participant-level features -----------------
+    np.savez_compressed("Feature_vector_allParticipants.npz", FV_forearm=FV_forearm, FV_wrist=FV_wrist)
+    print("Feature vectors saved for all participants as .npz")
 
 if __name__ == "__main__":
     main()
