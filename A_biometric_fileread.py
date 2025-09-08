@@ -4,6 +4,7 @@
 import os
 import numpy as np
 import wfdb  # MIT-BIH compatible reader
+from globals import *  # import project constants
 
 def main():
     # Dataset path (update if needed)
@@ -13,26 +14,19 @@ def main():
     converted_root = "Converted_data"
     os.makedirs(converted_root, exist_ok=True)
 
-    # Dataset parameters
-    noOfParticipants = 43
-    noOfSessions = 3
-    noOfGestures = 16
-    noOfTrials = 7
-
     count = 0
-
-    for sessionNum in range(1, noOfSessions + 1):
+    for sessionNum in range(1, NUM_OF_SESSIONS+1):
         sessionFolder = f"Session{sessionNum}_Converted"
         sessionPath = os.path.join(converted_root, sessionFolder)
         os.makedirs(sessionPath, exist_ok=True)
 
-        for participantNum in range(1, noOfParticipants + 1):
+        for participantNum in range(1, NUM_OF_PARTICIPANTS+1):
             participantFile = f"session{sessionNum}_participant{participantNum}"
             forearmData = {}
             wristData = {}
 
-            for gestureNum in range(1, noOfGestures + 2):  # +1 for resting position
-                for trialNum in range(1, noOfTrials + 1):
+            for gestureNum in range(1, NUM_OF_GESTURES+2):  # +1 for resting position (17 total)
+                for trialNum in range(1, NUM_OF_TRIALS+1):
                     filename = f"session{sessionNum}_participant{participantNum}_gesture{gestureNum}_trial{trialNum}"
                     filepath = os.path.join(mainFolder, f"Session{sessionNum}", participantFile, filename)
 
@@ -55,7 +49,7 @@ def main():
             np.savez_compressed(save_path, forearmData=forearmData, wristData=wristData)
 
             count += 1
-            print(f"Converted: {count} of {noOfParticipants * noOfSessions} participants")
+            print(f"Converted: {count} of {NUM_OF_PARTICIPANTS * NUM_OF_SESSIONS} participants")
 
     print("Participants file conversion completed (saved as .npz).")
 
